@@ -33,6 +33,12 @@ button:disabled{opacity:.6}
 .skor label:has(input:checked){background:var(--pri);border-color:var(--pri);color:#fff}
 .bar{position:sticky;top:0;background:var(--card);padding:10px 0;border-bottom:1px solid var(--bd);font-size:14px;z-index:1}
 .row.klik{cursor:pointer}
+.g{padding:12px 0;border-top:1px solid var(--bd)}
+.g:first-child{border-top:0}
+.g b{display:block}
+.g small{display:block;color:var(--mut);margin:2px 0 8px;line-height:1.5}
+.nk{display:flex;align-items:center;gap:8px;font-size:14px}
+.nk input{width:100px;padding:6px 8px}
 [hidden]{display:none!important}
 </style>
 </head>
@@ -77,7 +83,18 @@ button:disabled{opacity:.6}
     </div>
     <div class="card" id="c-tugas" hidden><h2>Untuk dinilai</h2><button id="btn-pilih" style="margin:0 0 12px">Pilih guru yang akan dinilai</button><p class="mut" style="margin-bottom:8px">Ketuk tugas berstatus Belum untuk mengisi.</p><div id="tugas"></div></div>
     <div class="card" id="c-hasil" hidden><h2>Hasil saya</h2><div id="hasil"></div></div>
-    <div class="card" id="c-kelola" hidden><h2>Pengelolaan</h2><p class="mut">Halaman untuk admin dan kepala sekolah menyusul.</p></div>
+    <div class="card" id="c-kelola" hidden><h2>Rekap dan nilai kepala sekolah</h2><p class="mut">Input nilai kepala sekolah dan lihat hasil seluruh guru.</p><button id="btn-rekap">Buka rekap</button></div>
+  </div>
+
+  <div id="v-rekap" hidden>
+    <div class="card">
+      <button class="sec" id="btn-rekap-kembali" style="margin-top:0">Kembali</button>
+      <h1 style="margin-top:14px">Rekap penilaian</h1>
+      <p class="mut" id="r-info"></p>
+      <input id="r-cari" placeholder="Cari nama guru" style="margin-top:12px">
+      <div class="err" id="err-rekap"></div>
+    </div>
+    <div class="card"><div id="r-daftar">Memuat…</div></div>
   </div>
 
   <div id="v-pilih" hidden>
@@ -128,7 +145,7 @@ const NAMA_PERAN = { admin: 'Admin', kepsek: 'Kepala Sekolah', guru: 'Guru', sis
 
 const db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const $ = id => document.getElementById(id);
-const show = v => ['v-login', 'v-sandi', 'v-beranda', 'v-form', 'v-pilih'].forEach(x => { $(x).hidden = x !== v; });
+const show = v => ['v-login', 'v-sandi', 'v-beranda', 'v-form', 'v-pilih', 'v-rekap'].forEach(x => { $(x).hidden = x !== v; });
 let profil = null;
 
 // Nomor login diubah menjadi email internal (pengguna tidak melihatnya)
@@ -224,6 +241,77 @@ async function muatHasil() {
   el.innerHTML = '';
   data.forEach(h => el.append(baris(h.nama_periode, h.nilai_akhir != null ? h.nilai_akhir : 'Belum lengkap')));
 }
+
+let rekap = [], periodeAktif = null;
+
+async function bukaRekap() {
+  show('v-rekap');
+  $('r-cari').value = '';
+  $('err-rekap').textContent = '';
+  $('r-info').textContent = '';
+  $('r-daftar').textContent = 'Memuat…';
+  const pr = await db.from('periode').select('id,nama').eq('aktif', true).maybeSingle();
+  if (pr.error || !pr.data) { $('r-daftar').innerHTML = '<p class="mut">Belum ada periode aktif.</p>'; return; }
+  periodeAktif = pr.data;
+  const { data, error } = await db.from('v_hasil_guru').select('*').eq('periode_id', periodeAktif.id).order('nama');
+  if (error) { $('r-daftar').textContent = 'Gagal memuat rekap.'; return; }
+  rekap = data;
+  gambarRekap();
+}
+
+function ringkas() {
+  const k = rekap.filter(r => r.nilai_kepsek != null).length;
+  const l = rekap.filter(r => r.lengkap).length;
+  $('r-info').textContent = `${periodeAktif.nama}: ${rekap.length} guru, nilai kepala sekolah terisi ${k}, nilai akhir lengkap ${l}.`;
+}
+
+function teksRekap(r) {
+  const f = (n, j) => n == null ? '–' : `${n} (${j})`;
+  return `PTS ${f(r.nilai_pts, r.penilai_pts)} · PM ${f(r.nilai_pm, r.penilai_pm)} · POTM ${f(r.nilai_potm, r.penilai_potm)} · Akhir ${r.nilai_akhir ?? '–'}`;
+}
+
+function gambarRekap() {
+  ringkas();
+  const q = $('r-cari').value.trim().toLowerCase(), el = $('r-daftar');
+  const hasil = rekap.filter(r => r.nama.toLowerCase().includes(q));
+  if (!hasil.length) { el.innerHTML = '<p class="mut">Tidak ada guru yang cocok.</p>'; return; }
+  el.innerHTML = '';
+  hasil.forEach(r => {
+    const d = document.createElement('div'); d.className = 'g';
+    const a = document.createElement('b'); a.textContent = r.nama;
+    const s = document.createElement('small'); s.textContent = teksRekap(r);
+    const w = document.createElement('div'); w.className = 'nk';
+    const t = document.createElement('span'); t.textContent = 'Nilai kepsek';
+    const i = document.createElement('input');
+    i.type = 'number'; i.min = 0; i.max = 100; i.step = 0.01; i.inputMode = 'decimal';
+    i.value = r.nilai_kepsek ?? '';
+    const st = document.createElement('span'); st.className = 'mut';
+    i.onchange = () => simpanNilaiKepsek(r, i, st, s);
+    w.append(t, i, st); d.append(a, s, w); el.append(d);
+  });
+}
+
+async function simpanNilaiKepsek(r, input, st, kecil) {
+  const v = input.value.trim();
+  $('err-rekap').textContent = '';
+  if (v === '') return;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0 || n > 100) { st.textContent = 'Harus 0 sampai 100'; return; }
+  st.textContent = 'Menyimpan…';
+  const { error } = await db.from('nilai_kepsek').upsert(
+    { periode_id: periodeAktif.id, guru_id: r.guru_id, nilai: n },
+    { onConflict: 'periode_id,guru_id' });
+  if (error) { st.textContent = 'Gagal'; $('err-rekap').textContent = error.message; return; }
+  const u = await db.from('v_hasil_guru').select('*').eq('periode_id', periodeAktif.id).eq('guru_id', r.guru_id).single();
+  if (!u.error) Object.assign(r, u.data); else r.nilai_kepsek = n;
+  kecil.textContent = teksRekap(r);
+  st.textContent = 'Tersimpan';
+  ringkas();
+}
+
+$('btn-rekap').onclick = bukaRekap;
+$('btn-rekap-kembali').onclick = () => beranda();
+$('r-cari').oninput = gambarRekap;
 
 let daftarGuru = [];
 
