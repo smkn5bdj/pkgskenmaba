@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PKG SMKN 5 Banjarmasin</title>
+<style>
+:root{--bg:#f5f6f8;--card:#fff;--tx:#1d2330;--mut:#667085;--pri:#1f6feb;--err:#c62828;--bd:#dde1e7}
+@media(prefers-color-scheme:dark){:root{--bg:#12151b;--card:#1b2029;--tx:#e8ebf0;--mut:#9aa4b2;--pri:#5b9dff;--err:#ff7a7a;--bd:#2c3340}}
+*{box-sizing:border-box}
+body{margin:0;font:16px/1.5 system-ui,sans-serif;background:var(--bg);color:var(--tx)}
+.wrap{max-width:440px;margin:0 auto;padding:24px 16px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:20px;margin-bottom:16px}
+h1{font-size:20px;margin:0 0 4px}
+h2{font-size:17px;margin:0 0 12px}
+.mut{color:var(--mut);font-size:14px;margin:0}
+label{display:block;font-size:14px;margin:12px 0 4px}
+input,select{width:100%;padding:10px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--tx);font:inherit}
+button{width:100%;margin-top:16px;padding:11px;border:0;border-radius:8px;background:var(--pri);color:#fff;font:inherit;font-weight:600;cursor:pointer}
+button.sec{background:transparent;color:var(--pri);border:1px solid var(--pri)}
+button:disabled{opacity:.6}
+.err{color:var(--err);font-size:14px;margin-top:10px;min-height:20px}
+.row{display:flex;justify-content:space-between;gap:8px;padding:10px 0;border-top:1px solid var(--bd);font-size:15px}
+.row:first-child{border-top:0}
+.tag{font-size:12px;padding:2px 8px;border-radius:99px;border:1px solid var(--bd);white-space:nowrap;align-self:center}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div id="v-login" class="card" hidden>
+    <h1>Penilaian Kinerja Guru</h1>
+    <p class="mut">SMKN 5 Banjarmasin</p>
+    <label for="peran">Masuk sebagai</label>
+    <select id="peran">
+      <option value="guru">Guru</option>
+      <option value="kepsek">Kepala Sekolah</option>
+      <option value="siswa">Siswa</option>
+      <option value="ortu">Orang Tua</option>
+      <option value="admin">Admin</option>
+    </select>
+    <label for="nomor" id="lbl-nomor">NIP / NUPTK</label>
+    <input id="nomor" autocomplete="username" autocapitalize="none">
+    <label for="sandi">Sandi</label>
+    <input id="sandi" type="password" autocomplete="current-password">
+    <button id="btn-masuk">Masuk</button>
+    <div class="err" id="err-login"></div>
+  </div>
+
+  <div id="v-sandi" class="card" hidden>
+    <h2>Ganti sandi</h2>
+    <p class="mut">Demi keamanan, buat sandi baru sebelum melanjutkan.</p>
+    <label for="sandi1">Sandi baru (minimal 8 karakter)</label>
+    <input id="sandi1" type="password" autocomplete="new-password">
+    <label for="sandi2">Ulangi sandi baru</label>
+    <input id="sandi2" type="password" autocomplete="new-password">
+    <button id="btn-sandi">Simpan sandi</button>
+    <div class="err" id="err-sandi"></div>
+  </div>
+
+  <div id="v-beranda" hidden>
+    <div class="card">
+      <h1 id="nama"></h1>
+      <p class="mut" id="info"></p>
+      <button class="sec" id="btn-keluar">Keluar</button>
+    </div>
+    <div class="card" id="c-tugas" hidden><h2>Untuk dinilai</h2><div id="tugas"></div></div>
+    <div class="card" id="c-hasil" hidden><h2>Hasil saya</h2><div id="hasil"></div></div>
+    <div class="card" id="c-kelola" hidden><h2>Pengelolaan</h2><p class="mut">Halaman untuk admin dan kepala sekolah menyusul.</p></div>
+  </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script>
+// ====== ISI DUA BARIS INI (Supabase > Project Settings > API) ======
+const SUPABASE_URL = 'https://czllywvdisqjqeripwwx.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_UZb2rnBS3lLAhfP6Yhgqkg_n0yTPe4n';
+// ===================================================================
+
+if (SUPABASE_URL.startsWith('ISI_')) {
+  document.body.innerHTML = '<div class="wrap"><div class="card"><h2>Belum dikonfigurasi</h2><p class="mut">Isi SUPABASE_URL dan SUPABASE_ANON_KEY di bagian atas file index.html.</p></div></div>';
+  throw new Error('Konfigurasi belum diisi');
+}
+
+const DOMAIN = 'pkg.smkn5.id';
+const PREFIX = { guru: 'g', kepsek: 'k', siswa: 's', ortu: 'o' };
+const LABEL = { guru: 'NIP / NUPTK', kepsek: 'NIP', siswa: 'NIS', ortu: 'NIS anak', admin: 'Email' };
+const NAMA_PERAN = { admin: 'Admin', kepsek: 'Kepala Sekolah', guru: 'Guru', siswa: 'Siswa', ortu: 'Orang Tua' };
+
+const db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const $ = id => document.getElementById(id);
+const show = v => ['v-login', 'v-sandi', 'v-beranda'].forEach(x => { $(x).hidden = x !== v; });
+let profil = null;
+
+// Nomor login diubah menjadi email internal (pengguna tidak melihatnya)
+function emailDari(peran, nomor) {
+  if (peran === 'admin') return nomor.trim();
+  return `${PREFIX[peran]}-${nomor.replace(/\s+/g, '').toLowerCase()}@${DOMAIN}`;
+}
+
+$('peran').onchange = () => { $('lbl-nomor').textContent = LABEL[$('peran').value]; };
+
+$('btn-masuk').onclick = async () => {
+  const peran = $('peran').value, nomor = $('nomor').value, sandi = $('sandi').value;
+  const e = $('err-login');
+  e.textContent = '';
+  if (!nomor.trim() || !sandi) { e.textContent = 'Lengkapi nomor dan sandi.'; return; }
+  $('btn-masuk').disabled = true;
+  const { error } = await db.auth.signInWithPassword({ email: emailDari(peran, nomor), password: sandi });
+  $('btn-masuk').disabled = false;
+  if (error) { e.textContent = 'Nomor atau sandi salah.'; return; }
+  if (!(await muatProfil(peran))) {
+    await db.auth.signOut();
+    e.textContent = 'Akun tidak cocok dengan peran yang dipilih.';
+    return;
+  }
+  lanjut();
+};
+
+async function muatProfil(peranDipilih) {
+  const { data: { user } } = await db.auth.getUser();
+  if (!user) return false;
+  const { data, error } = await db.from('profil').select('nama,peran,wajib_ganti_sandi,aktif').eq('id', user.id).single();
+  if (error || !data || !data.aktif) return false;
+  if (peranDipilih && data.peran !== peranDipilih) return false;
+  profil = { ...data, id: user.id };
+  return true;
+}
+
+function lanjut() {
+  if (profil.wajib_ganti_sandi) show('v-sandi'); else beranda();
+}
+
+$('btn-sandi').onclick = async () => {
+  const a = $('sandi1').value, b = $('sandi2').value, e = $('err-sandi');
+  e.textContent = '';
+  if (a.length < 8) { e.textContent = 'Sandi minimal 8 karakter.'; return; }
+  if (a !== b) { e.textContent = 'Kedua sandi tidak sama.'; return; }
+  $('btn-sandi').disabled = true;
+  const r = await db.auth.updateUser({ password: a });
+  if (r.error) { $('btn-sandi').disabled = false; e.textContent = 'Gagal menyimpan sandi: ' + r.error.message; return; }
+  await db.rpc('selesai_ganti_sandi');
+  profil.wajib_ganti_sandi = false;
+  $('btn-sandi').disabled = false;
+  beranda();
+};
+
+function beranda() {
+  show('v-beranda');
+  $('nama').textContent = profil.nama;
+  $('info').textContent = NAMA_PERAN[profil.peran];
+  const p = profil.peran;
+  $('c-tugas').hidden = !['guru', 'siswa', 'ortu'].includes(p);
+  $('c-hasil').hidden = p !== 'guru';
+  $('c-kelola').hidden = !['admin', 'kepsek'].includes(p);
+  if (!$('c-tugas').hidden) muatTugas();
+  if (p === 'guru') muatHasil();
+}
+
+function baris(kiri, kanan) {
+  const r = document.createElement('div'); r.className = 'row';
+  const a = document.createElement('span'); a.textContent = kiri;
+  const b = document.createElement('span'); b.className = 'tag'; b.textContent = kanan;
+  r.append(a, b);
+  return r;
+}
+
+async function muatTugas() {
+  const el = $('tugas');
+  el.textContent = 'Memuat…';
+  const { data, error } = await db.from('v_tugas_saya').select('*').order('status');
+  if (error) { el.textContent = 'Gagal memuat tugas.'; return; }
+  if (!data.length) { el.innerHTML = '<p class="mut">Belum ada tugas penilaian.</p>'; return; }
+  el.innerHTML = '';
+  data.forEach(t => el.append(baris(`${t.nama_guru} · ${t.instrumen}`, t.status === 'selesai' ? 'Selesai' : 'Belum')));
+}
+
+async function muatHasil() {
+  const el = $('hasil');
+  el.textContent = 'Memuat…';
+  const { data, error } = await db.from('v_hasil_guru').select('*').eq('guru_id', profil.id);
+  if (error) { el.textContent = 'Gagal memuat hasil.'; return; }
+  if (!data.length) { el.innerHTML = '<p class="mut">Belum ada periode penilaian.</p>'; return; }
+  el.innerHTML = '';
+  data.forEach(h => el.append(baris(h.nama_periode, h.nilai_akhir != null ? h.nilai_akhir : 'Belum lengkap')));
+}
+
+$('btn-keluar').onclick = async () => {
+  await db.auth.signOut();
+  profil = null;
+  $('sandi').value = '';
+  show('v-login');
+};
+
+(async () => {
+  const { data: { session } } = await db.auth.getSession();
+  if (session && await muatProfil(null)) lanjut(); else show('v-login');
+})();
+</script>
+</body>
+</html>
