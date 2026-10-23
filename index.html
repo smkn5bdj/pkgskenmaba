@@ -23,6 +23,16 @@ button:disabled{opacity:.6}
 .row{display:flex;justify-content:space-between;gap:8px;padding:10px 0;border-top:1px solid var(--bd);font-size:15px}
 .row:first-child{border-top:0}
 .tag{font-size:12px;padding:2px 8px;border-radius:99px;border:1px solid var(--bd);white-space:nowrap;align-self:center}
+.komp{font-weight:700;margin:18px 0 6px}
+.ind{padding:12px 0;border-top:1px solid var(--bd)}
+.ind p{margin:0 0 8px;font-size:15px}
+.skor{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.skor label{position:relative;margin:0;text-align:center;border:1px solid var(--bd);border-radius:8px;padding:8px 2px;font-size:12px;line-height:1.3;cursor:pointer}
+.skor label b{display:block;font-size:17px}
+.skor input{position:absolute;opacity:0;pointer-events:none;width:0;height:0}
+.skor label:has(input:checked){background:var(--pri);border-color:var(--pri);color:#fff}
+.bar{position:sticky;top:0;background:var(--card);padding:10px 0;border-bottom:1px solid var(--bd);font-size:14px;z-index:1}
+.row.klik{cursor:pointer}
 [hidden]{display:none!important}
 </style>
 </head>
@@ -65,9 +75,24 @@ button:disabled{opacity:.6}
       <p class="mut" id="info"></p>
       <button class="sec" id="btn-keluar">Keluar</button>
     </div>
-    <div class="card" id="c-tugas" hidden><h2>Untuk dinilai</h2><div id="tugas"></div></div>
+    <div class="card" id="c-tugas" hidden><h2>Untuk dinilai</h2><p class="mut" style="margin-bottom:8px">Ketuk tugas berstatus Belum untuk mengisi.</p><div id="tugas"></div></div>
     <div class="card" id="c-hasil" hidden><h2>Hasil saya</h2><div id="hasil"></div></div>
     <div class="card" id="c-kelola" hidden><h2>Pengelolaan</h2><p class="mut">Halaman untuk admin dan kepala sekolah menyusul.</p></div>
+  </div>
+
+  <div id="v-form" hidden>
+    <div class="card">
+      <button class="sec" id="btn-kembali" style="margin-top:0">Kembali</button>
+      <h1 id="f-judul" style="margin-top:14px"></h1>
+      <p class="mut" id="f-sub"></p>
+      <p class="mut" style="margin-top:8px">1 = Kurang, 2 = Cukup, 3 = Baik, 4 = Sangat Baik</p>
+    </div>
+    <div class="card">
+      <div class="bar" id="f-bar"></div>
+      <div id="f-isi">Memuat…</div>
+      <button id="btn-kirim" disabled>Kirim penilaian</button>
+      <div class="err" id="err-form"></div>
+    </div>
   </div>
 
 </div>
@@ -91,7 +116,7 @@ const NAMA_PERAN = { admin: 'Admin', kepsek: 'Kepala Sekolah', guru: 'Guru', sis
 
 const db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const $ = id => document.getElementById(id);
-const show = v => ['v-login', 'v-sandi', 'v-beranda'].forEach(x => { $(x).hidden = x !== v; });
+const show = v => ['v-login', 'v-sandi', 'v-beranda', 'v-form'].forEach(x => { $(x).hidden = x !== v; });
 let profil = null;
 
 // Nomor login diubah menjadi email internal (pengguna tidak melihatnya)
@@ -159,11 +184,12 @@ function beranda() {
   if (p === 'guru') muatHasil();
 }
 
-function baris(kiri, kanan) {
+function baris(kiri, kanan, aksi) {
   const r = document.createElement('div'); r.className = 'row';
   const a = document.createElement('span'); a.textContent = kiri;
   const b = document.createElement('span'); b.className = 'tag'; b.textContent = kanan;
   r.append(a, b);
+  if (aksi) { r.classList.add('klik'); r.onclick = aksi; }
   return r;
 }
 
@@ -174,7 +200,7 @@ async function muatTugas() {
   if (error) { el.textContent = 'Gagal memuat tugas.'; return; }
   if (!data.length) { el.innerHTML = '<p class="mut">Belum ada tugas penilaian.</p>'; return; }
   el.innerHTML = '';
-  data.forEach(t => el.append(baris(`${t.nama_guru} · ${t.instrumen}`, t.status === 'selesai' ? 'Selesai' : 'Belum')));
+  data.forEach(t => el.append(baris(`${t.nama_guru} · ${t.instrumen}`, t.status === 'selesai' ? 'Selesai' : 'Belum', t.status === 'belum' ? () => bukaForm(t) : null)));
 }
 
 async function muatHasil() {
@@ -186,6 +212,79 @@ async function muatHasil() {
   el.innerHTML = '';
   data.forEach(h => el.append(baris(h.nama_periode, h.nilai_akhir != null ? h.nilai_akhir : 'Belum lengkap')));
 }
+
+const LABEL_SKOR = ['', 'Kurang', 'Cukup', 'Baik', 'Sangat Baik'];
+let tugas = null, total = 0, terisi = new Set();
+
+async function bukaForm(t) {
+  tugas = t; terisi = new Set(); total = 0;
+  show('v-form');
+  $('f-judul').textContent = t.nama_guru;
+  $('f-sub').textContent = t.nama_instrumen;
+  $('f-isi').textContent = 'Memuat…';
+  $('err-form').textContent = '';
+  $('btn-kirim').disabled = true;
+  const [k, j] = await Promise.all([
+    db.from('komponen').select('urutan,nama,instrumen!inner(kode),indikator(id,urutan,teks)')
+      .eq('instrumen.kode', t.instrumen).order('urutan').order('urutan', { referencedTable: 'indikator' }),
+    db.from('jawaban').select('indikator_id,skor').eq('penugasan_id', t.penugasan_id)
+  ]);
+  if (k.error || j.error) { $('f-isi').textContent = 'Gagal memuat form. Coba muat ulang halaman.'; return; }
+  const sudah = {};
+  (j.data || []).forEach(x => { sudah[x.indikator_id] = x.skor; });
+  const isi = $('f-isi');
+  isi.innerHTML = '';
+  k.data.forEach(kp => {
+    const h = document.createElement('div'); h.className = 'komp'; h.textContent = kp.nama; isi.append(h);
+    kp.indikator.forEach(ind => {
+      total++;
+      const d = document.createElement('div'); d.className = 'ind';
+      const p = document.createElement('p'); p.textContent = `${ind.urutan}. ${ind.teks}`;
+      const g = document.createElement('div'); g.className = 'skor';
+      for (let n = 1; n <= 4; n++) {
+        const l = document.createElement('label');
+        const r = document.createElement('input');
+        r.type = 'radio'; r.name = 'i' + ind.id; r.value = n;
+        if (sudah[ind.id] === n) { r.checked = true; terisi.add(ind.id); }
+        r.onchange = () => simpanJawaban(ind.id, n);
+        const b = document.createElement('b'); b.textContent = n;
+        l.append(r, b, document.createTextNode(LABEL_SKOR[n]));
+        g.append(l);
+      }
+      d.append(p, g); isi.append(d);
+    });
+  });
+  perbaruiBar();
+}
+
+async function simpanJawaban(indId, skor) {
+  $('err-form').textContent = '';
+  const { error } = await db.from('jawaban').upsert(
+    { penugasan_id: tugas.penugasan_id, indikator_id: indId, skor: skor },
+    { onConflict: 'penugasan_id,indikator_id' });
+  if (error) {
+    $('err-form').textContent = error.code === '42501'
+      ? 'Periode penilaian belum dibuka atau sudah ditutup.'
+      : 'Jawaban belum tersimpan: ' + error.message;
+    return;
+  }
+  terisi.add(indId);
+  perbaruiBar();
+}
+
+function perbaruiBar() {
+  $('f-bar').textContent = `Terisi ${terisi.size} dari ${total}`;
+  $('btn-kirim').disabled = total === 0 || terisi.size < total;
+}
+
+$('btn-kirim').onclick = async () => {
+  if (!confirm('Kirim penilaian? Setelah dikirim, jawaban tidak bisa diubah.')) return;
+  $('btn-kirim').disabled = true;
+  const { error } = await db.rpc('selesaikan_penugasan', { p_penugasan_id: tugas.penugasan_id });
+  if (error) { $('err-form').textContent = error.message; perbaruiBar(); return; }
+  beranda();
+};
+$('btn-kembali').onclick = () => beranda();
 
 $('btn-keluar').onclick = async () => {
   await db.auth.signOut();
