@@ -75,9 +75,20 @@ button:disabled{opacity:.6}
       <p class="mut" id="info"></p>
       <button class="sec" id="btn-keluar">Keluar</button>
     </div>
-    <div class="card" id="c-tugas" hidden><h2>Untuk dinilai</h2><p class="mut" style="margin-bottom:8px">Ketuk tugas berstatus Belum untuk mengisi.</p><div id="tugas"></div></div>
+    <div class="card" id="c-tugas" hidden><h2>Untuk dinilai</h2><button id="btn-pilih" style="margin:0 0 12px">Pilih guru yang akan dinilai</button><p class="mut" style="margin-bottom:8px">Ketuk tugas berstatus Belum untuk mengisi.</p><div id="tugas"></div></div>
     <div class="card" id="c-hasil" hidden><h2>Hasil saya</h2><div id="hasil"></div></div>
     <div class="card" id="c-kelola" hidden><h2>Pengelolaan</h2><p class="mut">Halaman untuk admin dan kepala sekolah menyusul.</p></div>
+  </div>
+
+  <div id="v-pilih" hidden>
+    <div class="card">
+      <button class="sec" id="btn-pilih-kembali" style="margin-top:0">Kembali</button>
+      <h1 style="margin-top:14px">Pilih guru yang dinilai</h1>
+      <p class="mut" id="p-info"></p>
+      <input id="p-cari" placeholder="Cari nama guru" style="margin-top:12px">
+      <div class="err" id="err-pilih"></div>
+    </div>
+    <div class="card"><div id="p-daftar">Memuat…</div></div>
   </div>
 
   <div id="v-form" hidden>
@@ -85,6 +96,7 @@ button:disabled{opacity:.6}
       <button class="sec" id="btn-kembali" style="margin-top:0">Kembali</button>
       <h1 id="f-judul" style="margin-top:14px"></h1>
       <p class="mut" id="f-sub"></p>
+      <button class="sec" id="btn-batal" hidden style="margin-top:10px">Batalkan pilihan guru ini</button>
       <p class="mut" style="margin-top:8px">1 = Kurang, 2 = Cukup, 3 = Baik, 4 = Sangat Baik</p>
     </div>
     <div class="card">
@@ -116,7 +128,7 @@ const NAMA_PERAN = { admin: 'Admin', kepsek: 'Kepala Sekolah', guru: 'Guru', sis
 
 const db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const $ = id => document.getElementById(id);
-const show = v => ['v-login', 'v-sandi', 'v-beranda', 'v-form'].forEach(x => { $(x).hidden = x !== v; });
+const show = v => ['v-login', 'v-sandi', 'v-beranda', 'v-form', 'v-pilih'].forEach(x => { $(x).hidden = x !== v; });
 let profil = null;
 
 // Nomor login diubah menjadi email internal (pengguna tidak melihatnya)
@@ -213,6 +225,52 @@ async function muatHasil() {
   data.forEach(h => el.append(baris(h.nama_periode, h.nilai_akhir != null ? h.nilai_akhir : 'Belum lengkap')));
 }
 
+let daftarGuru = [];
+
+async function bukaPilih() {
+  show('v-pilih');
+  $('p-info').textContent = 'Ketuk nama guru untuk memilihnya. Setiap guru punya kuota penilai, dan guru yang kuotanya penuh tidak bisa dipilih.';
+  $('p-cari').value = '';
+  $('err-pilih').textContent = '';
+  $('p-daftar').textContent = 'Memuat…';
+  const { data, error } = await db.rpc('daftar_guru_dinilai');
+  if (error) { $('p-daftar').textContent = 'Gagal memuat daftar guru.'; return; }
+  daftarGuru = data;
+  gambarDaftar();
+}
+
+function gambarDaftar() {
+  const q = $('p-cari').value.trim().toLowerCase(), el = $('p-daftar');
+  const hasil = daftarGuru.filter(g => g.nama.toLowerCase().includes(q));
+  if (!hasil.length) { el.innerHTML = '<p class="mut">Tidak ada guru yang cocok.</p>'; return; }
+  el.innerHTML = '';
+  hasil.forEach(g => {
+    const penuh = g.terpakai >= g.maks && !g.saya_pilih;
+    const label = g.saya_pilih ? 'Sudah dipilih' : penuh ? 'Penuh' : `Pilih (${g.terpakai}/${g.maks})`;
+    el.append(baris(g.nama, label, (g.saya_pilih || penuh) ? null : () => pilihGuru(g)));
+  });
+}
+
+async function pilihGuru(g) {
+  if (!confirm(`Pilih ${g.nama} untuk Anda nilai?`)) return;
+  $('err-pilih').textContent = '';
+  const { error } = await db.rpc('pilih_guru', { p_guru: g.guru_id });
+  if (error) { $('err-pilih').textContent = error.message; window.scrollTo(0, 0); }
+  const r = await db.rpc('daftar_guru_dinilai');
+  if (!r.error) { daftarGuru = r.data; gambarDaftar(); }
+}
+
+$('btn-pilih').onclick = bukaPilih;
+$('btn-pilih-kembali').onclick = () => beranda();
+$('p-cari').oninput = gambarDaftar;
+
+$('btn-batal').onclick = async () => {
+  if (!confirm('Batalkan pilihan guru ini? Jawaban yang sudah terisi akan dihapus.')) return;
+  const { error } = await db.rpc('batal_pilih_guru', { p_penugasan_id: tugas.penugasan_id });
+  if (error) { $('err-form').textContent = error.message; return; }
+  beranda();
+};
+
 const LABEL_SKOR = ['', 'Kurang', 'Cukup', 'Baik', 'Sangat Baik'];
 let tugas = null, total = 0, terisi = new Set();
 
@@ -221,6 +279,7 @@ async function bukaForm(t) {
   show('v-form');
   $('f-judul').textContent = t.nama_guru;
   $('f-sub').textContent = t.nama_instrumen;
+  $('btn-batal').hidden = t.dibuat_oleh !== 'penilai';
   $('f-isi').textContent = 'Memuat…';
   $('err-form').textContent = '';
   $('btn-kirim').disabled = true;
